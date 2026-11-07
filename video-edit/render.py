@@ -1,7 +1,8 @@
 """Draw the TikTok overlays (frosted-glass cards, room labels, watermark, CTA cursor)
 on top of base.mp4 and encode the final video.
 
-usage: python3 render.py <base.mp4> <contact_photo.jpg> <out.mp4> [--frames a:b] [--stills dir t1,t2,...]
+usage: python3 render.py <base.mp4> <contact_photo.jpg> <out.mp4> [--audio music.wav] [--frames a:b]
+       [--stills dir t1,t2,...]
 """
 import math
 import subprocess
@@ -297,10 +298,29 @@ def build(photo_path):
 
     # 8. AMENITIES ----------------------------------------------------------------
     a, b = t["amenity"]
-    cards.append(list_card(a + 0.1, b, "KEMUDAHAN BERDEKATAN", [
-        "Masjid Al-Ehsan Kampung Tok Muda", "SRA Kampung Tok Muda", "Sek Keb Tok Muda",
-        "SMK Tengku Idris, Pekan Kapar", "Sek Men Islam Hira'", "Klinik Kesihatan Tok Muda",
-        "99 Speedmart"], zone="upper", f_item=SEMI(34), row=54))
+    rows = [("SK Tok Muda", "1 minit"), ("Pekan Kapar", "5 minit"),
+            ("Hospital Kapar", "10 minit"), ("Stesen ECRL Kapar", "10 minit")]
+    w, pad, rh = MAXW, 36, 76
+    f_n, f_c = BOLD(42), BLACK(36)
+    h = pad + 56 + 20 + rh * len(rows) - 14 + pad
+    c = Card(a + 0.1, b, w, h, zone="upper")
+    d = c.d
+    shadow_text(d, (pad, pad - BLACK(46).getbbox("A")[1]), "KEMUDAHAN BERDEKATAN", BLACK(46), GOLD)
+    for k, (name, mins) in enumerate(rows):
+        yy = pad + 56 + 20 + k * rh
+        cy = yy + (rh - 14) // 2
+        pin(d, pad + 16, cy + 6, 12, GOLD)
+        bb = f_n.getbbox("Ag")
+        shadow_text(d, (pad + 46, cy - (bb[1] + bb[3]) / 2), name, f_n, WHITE)
+        cw = text_w(f_c, mins) + 44
+        cb = f_c.getbbox("0m")
+        chh = cb[3] - cb[1] + 24
+        x0 = w - pad - cw
+        d.rounded_rectangle((x0, cy - chh // 2, x0 + cw, cy + chh // 2), chh // 2, fill=GOLD)
+        d.text((x0 + 22, cy - (cb[1] + cb[3]) / 2), mins, font=f_c, fill=(16, 20, 28, 255))
+        if k < len(rows) - 1:
+            d.line((pad, yy + rh - 7, w - pad, yy + rh - 7), fill=(255, 255, 255, 45), width=2)
+    cards.append(c)
 
     # 9. ACCESS -------------------------------------------------------------------
     a, b = t["access"]
@@ -324,23 +344,29 @@ def build(photo_path):
 
     # 10. CTA ---------------------------------------------------------------------
     a, b = t["cta"]
-    # contact card (upper)
-    w, h = MAXW, 600
+    # compact contact card (upper): photo left, text right
+    ps, ring, pad = 150, 162, 26
+    f1, f2, f3 = BLACK(50), SEMI(31), BOLD(31)
+    lines = [("Hubungi Anis", f1, WHITE), ("untuk viewing & booking", f2, SOFT),
+             ("BOOKING RM1000 sahaja!!", f3, GOLD)]
+    tw = max(text_w(f, s) for s, f, _ in lines)
+    w, h = pad + ring + 26 + tw + pad + 6, ring + 2 * pad
     c = Card(a + 0.1, b + 1, w, h, zone="upper")
     d = c.d
     ph = ImageOps.exif_transpose(Image.open(photo_path)).convert("RGB")
     pw, phh = ph.size
     cx_, cy_, sz = int(pw * 0.47), int(phh * 0.585), int(pw * 0.46)
-    ph = ph.crop((cx_ - sz // 2, cy_ - sz // 2, cx_ + sz // 2, cy_ + sz // 2)).resize((280, 280), Image.LANCZOS)
-    ring = 300
-    d.ellipse(((w - ring) // 2, 34, (w + ring) // 2, 34 + ring), fill=GOLD)
-    m = Image.new("L", (280, 280), 0)
-    ImageDraw.Draw(m).ellipse((0, 0, 279, 279), fill=255)
-    c.fg.paste(ph, ((w - 280) // 2, 44), m)
-    yy = 34 + ring + 26
-    shadow_text(d, (w // 2, yy), "Hubungi Anis", BLACK(68), WHITE, anchor="ma")
-    shadow_text(d, (w // 2, yy + 92), "untuk viewing & booking", SEMI(40), SOFT, anchor="ma")
-    shadow_text(d, (w // 2, yy + 152), "BOOKING RM1000 sahaja!!", BOLD(40), GOLD, anchor="ma")
+    ph = ph.crop((cx_ - sz // 2, cy_ - sz // 2, cx_ + sz // 2, cy_ + sz // 2)).resize((ps, ps), Image.LANCZOS)
+    d.ellipse((pad, pad, pad + ring, pad + ring), fill=GOLD)
+    m = Image.new("L", (ps, ps), 0)
+    ImageDraw.Draw(m).ellipse((0, 0, ps - 1, ps - 1), fill=255)
+    off = (ring - ps) // 2
+    c.fg.paste(ph, (pad + off, pad + off), m)
+    tx = pad + ring + 26
+    yy = pad + 14
+    for (s, f, col), g in zip(lines, (66, 46, 0)):
+        shadow_text(d, (tx, yy - f.getbbox("A")[1]), s, f, col)
+        yy += g
     cards.append(c)
 
     # price + WhatsApp button (lower)
@@ -503,10 +529,12 @@ def main():
     f0, f1 = frames or (0, n_total)
     dec = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{f0 / FPS:.4f}", "-i", base, "-frames:v", str(f1 - f0),
                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    audio = ["-i", args[args.index("--audio") + 1]] if "--audio" in args else \
+        ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-                            "-r", str(FPS), "-i", "-", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                            "-r", str(FPS), "-i", "-", *audio,
                             "-shortest", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-                            "-profile:v", "high", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out],
+                            "-profile:v", "high", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out],
                            stdin=subprocess.PIPE)
     fsize = W * H * 3
     for n in range(f0, f1):
